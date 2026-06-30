@@ -4,124 +4,265 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>简易 IoT 监控</title>
-    <!-- 引入 TailwindCSS -->
+    <title>IoT 实时数据监控 (多节点版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 Paho MQTT -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background-color: #f0f2f5; font-family: sans-serif; }
-        .card { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        body { background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%); min-height: 100vh; font-family: 'Segoe UI', sans-serif; }
+        .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); border-radius: 20px; box-shadow: 0 10px 40px -10px rgba(0,0,0,0.1); border: 1px solid rgba(255,255,255,0.5); }
+        .status-indicator { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; transition: all 0.3s ease; }
+        .bg-success { background-color: #10b981; box-shadow: 0 0 10px #10b981; }
+        .bg-danger { background-color: #ef4444; box-shadow: 0 0 10px #ef4444; }
+        .bg-warning { background-color: #f59e0b; box-shadow: 0 0 10px #f59e0b; }
+        .log-entry { font-family: 'Consolas', monospace; font-size: 0.85rem; border-bottom: 1px solid #eee; padding: 4px 0; }
+        .log-time { color: #9ca3af; margin-right: 8px; }
     </style>
 </head>
-<body class="min-h-screen flex items-center justify-center p-4">
+<body class="flex items-center justify-center p-4 sm:p-8">
 
-    <div class="max-w-md w-full space-y-6">
-        <!-- 标题与状态 -->
-        <div class="text-center">
-            <h1 class="text-2xl font-bold text-gray-800">传感器实时监控</h1>
-            <p id="status" class="text-sm text-gray-500 mt-2">正在连接...</p>
-        </div>
-
-        <!-- 数据展示卡片 -->
-        <div class="grid grid-cols-2 gap-4">
-            <div class="card p-6 text-center">
-                <div class="text-gray-500 text-sm mb-1">温度</div>
-                <div class="text-4xl font-bold text-orange-500"><span id="temp">--</span>°C</div>
+    <div class="w-full max-w-3xl glass-panel p-6 sm:p-8 space-y-8">
+        <!-- 头部与配置 -->
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 pb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fa-solid fa-network-wired text-indigo-600"></i> IoT 数据监控
+                </h1>
+                <p class="text-sm text-slate-500 mt-1">支持多节点切换 · 自动重连 · 实时解析</p>
             </div>
-            <div class="card p-6 text-center">
-                <div class="text-gray-500 text-sm mb-1">湿度</div>
-                <div class="text-4xl font-bold text-blue-500"><span id="hum">--</span>%</div>
+            
+            <!-- 连接状态徽章 -->
+            <div id="statusBadge" class="flex items-center px-4 py-2 rounded-lg bg-slate-100 text-slate-600 text-sm font-semibold transition-colors duration-300">
+                <span id="statusDot" class="status-indicator bg-warning"></span>
+                <span id="statusText">未连接</span>
             </div>
         </div>
 
-        <!-- 日志区域 -->
-        <div class="card p-4">
-            <h3 class="text-xs font-bold text-gray-400 uppercase mb-2">实时日志</h3>
-            <div id="logs" class="h-32 overflow-y-auto text-xs font-mono text-gray-600 space-y-1 bg-gray-50 p-2 rounded">
-                <!-- 日志将在这里显示 -->
+        <!-- Broker 选择器 -->
+        <div class="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
+            <label class="block text-xs font-bold text-indigo-800 uppercase mb-2">MQTT Broker 节点选择</label>
+            <div class="flex gap-2 overflow-x-auto pb-2">
+                <button onclick="switchBroker('hivemq')" class="broker-btn flex-1 px-4 py-2 bg-white border border-indigo-200 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-600 hover:text-white transition shadow-sm active-broker ring-2 ring-indigo-500" data-id="hivemq">
+                    HiveMQ (推荐)
+                </button>
+                <button onclick="switchBroker('emqx')" class="broker-btn flex-1 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-600 hover:text-white transition shadow-sm" data-id="emqx">
+                    EMQX
+                </button>
+                <button onclick="switchBroker('mosquitto')" class="broker-btn flex-1 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-600 hover:text-white transition shadow-sm" data-id="mosquitto">
+                    Mosquitto
+                </button>
+            </div>
+            <div class="mt-2 text-xs text-indigo-400 flex justify-between">
+                <span id="currentUrl">当前: wss://broker.hivemq.com:8884/mqtt</span>
+                <span id="topicDisplay">Topic: test/sensor_data</span>
             </div>
         </div>
-        
-        <!-- 测试按钮 -->
-        <button onclick="simulateData()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded transition">
-            模拟接收一条数据
-        </button>
+
+        <!-- 数据卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- 温度 -->
+            <div class="relative overflow-hidden bg-white rounded-2xl p-6 shadow-sm border border-orange-100 group hover:shadow-md transition-all">
+                <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <i class="fa-solid fa-temperature-three-quarters text-6xl text-orange-500"></i>
+                </div>
+                <p class="text-sm font-medium text-gray-500 uppercase tracking-wider">实时温度</p>
+                <div class="mt-2 flex items-baseline gap-1">
+                    <span id="tempVal" class="text-5xl font-bold text-gray-800 tracking-tight">--</span>
+                    <span class="text-xl text-gray-400">°C</span>
+                </div>
+                <div class="mt-4 h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                    <div id="tempBar" class="h-full bg-orange-500 w-0 transition-all duration-500"></div>
+                </div>
+            </div>
+
+            <!-- 湿度 -->
+            <div class="relative overflow-hidden bg-white rounded-2xl p-6 shadow-sm border border-blue-100 group hover:shadow-md transition-all">
+                <div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <i class="fa-solid fa-droplet text-6xl text-blue-500"></i>
+                </div>
+                <p class="text-sm font-medium text-gray-500 uppercase tracking-wider">实时湿度</p>
+                <div class="mt-2 flex items-baseline gap-1">
+                    <span id="humVal" class="text-5xl font-bold text-gray-800 tracking-tight">--</span>
+                    <span class="text-xl text-gray-400">%</span>
+                </div>
+                <div class="mt-4 h-1 w-full bg-gray-100 rounded-full overflow-hidden">
+                    <div id="humBar" class="h-full bg-blue-500 w-0 transition-all duration-500"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 控制与日志 -->
+        <div class="space-y-4">
+            <div class="flex gap-3">
+                <button onclick="manualConnect()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-4 rounded-xl transition shadow-lg shadow-indigo-200 flex justify-center items-center gap-2">
+                    <i class="fa-solid fa-rotate-right"></i> 重新连接
+                </button>
+                <button onclick="clearLogs()" class="px-4 py-2.5 bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 rounded-xl transition">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            </div>
+
+            <div class="bg-slate-900 rounded-xl p-4 h-48 overflow-y-auto shadow-inner border border-slate-800" id="logArea">
+                <div class="log-entry text-slate-500 italic">> 系统初始化完成，请选择节点并连接...</div>
+            </div>
+        </div>
     </div>
 
     <script>
-        // 配置信息
-        const HOST = "broker.emqx.io";
-        const PORT = 8083; // WebSocket 端口
-        const TOPIC = "test/sensor_data";
-        
-        let client;
-        const logsDiv = document.getElementById('logs');
-        const statusP = document.getElementById('status');
+        // Broker 配置列表
+        const BROKERS = {
+            hivemq: { host: "broker.hivemq.com", port: 8884, path: "/mqtt", useSSL: true },
+            emqx: { host: "broker.emqx.io", port: 8084, path: "/mqtt", useSSL: true },
+            mosquitto: { host: "test.mosquitto.org", port: 8081, path: "/", useSSL: false } // Mosquitto 8081 通常是 WS
+        };
 
-        // 添加日志
-        function addLog(msg) {
-            const div = document.createElement('div');
-            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            logsDiv.appendChild(div);
-            logsDiv.scrollTop = logsDiv.scrollHeight;
+        let currentBrokerId = 'hivemq';
+        let client = null;
+        const TOPIC = "test/sensor_data";
+
+        // 初始化 UI
+        function initUI() {
+            updateBrokerUI();
+            manualConnect();
         }
 
-        // 初始化 MQTT
-        function initMQTT() {
-            client = new Paho.MQTT.Client(HOST, PORT, "web_client_" + Math.random().toString(16).substr(2, 8));
+        // 切换 Broker
+        function switchBroker(id) {
+            if (client && client.isConnected()) {
+                client.disconnect();
+            }
+            currentBrokerId = id;
+            updateBrokerUI();
+            manualConnect();
+        }
+
+        function updateBrokerUI() {
+            // 更新按钮样式
+            document.querySelectorAll('.broker-btn').forEach(btn => {
+                if (btn.dataset.id === currentBrokerId) {
+                    btn.classList.add('ring-2', 'ring-indigo-500', 'bg-indigo-50', 'border-indigo-300');
+                    btn.classList.remove('border-gray-200', 'text-gray-600');
+                } else {
+                    btn.classList.remove('ring-2', 'ring-indigo-500', 'bg-indigo-50', 'border-indigo-300');
+                    btn.classList.add('border-gray-200', 'text-gray-600');
+                }
+            });
+
+            const b = BROKERS[currentBrokerId];
+            const protocol = b.useSSL ? 'wss' : 'ws';
+            document.getElementById('currentUrl').innerText = `当前: ${protocol}://${b.host}:${b.port}${b.path}`;
+        }
+
+        function updateStatus(state, msg) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            const badge = document.getElementById('statusBadge');
+
+            text.innerText = msg;
+            dot.className = 'status-indicator';
+
+            if (state === 'connected') {
+                dot.classList.add('bg-success');
+                badge.classList.replace('bg-slate-100', 'bg-green-50');
+                badge.classList.replace('text-slate-600', 'text-green-700');
+                badge.classList.replace('border-red-200', 'border-green-200');
+            } else if (state === 'error') {
+                dot.classList.add('bg-danger');
+                badge.classList.replace('bg-green-50', 'bg-red-50');
+                badge.classList.replace('text-green-700', 'text-red-700');
+            } else {
+                dot.classList.add('bg-warning');
+                badge.classList.replace('bg-red-50', 'bg-slate-100');
+                badge.classList.replace('bg-green-50', 'bg-slate-100');
+                badge.classList.replace('text-red-700', 'text-slate-600');
+                badge.classList.replace('text-green-700', 'text-slate-600');
+            }
+        }
+
+        function addLog(msg, type = 'info') {
+            const logArea = document.getElementById('logArea');
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = 'log-entry';
             
+            let colorClass = 'text-slate-300';
+            if (type === 'error') colorClass = 'text-red-400';
+            if (type === 'success') colorClass = 'text-green-400';
+            if (type === 'warn') colorClass = 'text-yellow-400';
+
+            div.innerHTML = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${msg}</span>`;
+            logArea.appendChild(div);
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function manualConnect() {
+            if (client) {
+                try { client.disconnect(); } catch(e){}
+            }
+
+            const config = BROKERS[currentBrokerId];
+            const clientId = "web_" + Math.random().toString(16).substr(2, 8);
+            
+            updateStatus('connecting', '连接中...');
+            addLog(`正在连接 ${config.host}:${config.port} ...`);
+
+            client = new Paho.MQTT.Client(config.host, Number(config.port), config.path, clientId);
+
             client.onConnectionLost = (responseObject) => {
-                statusP.innerText = "连接断开: " + responseObject.errorMessage;
-                statusP.className = "text-sm text-red-500 mt-2";
-                addLog("连接丢失");
+                if (responseObject.errorCode !== 0) {
+                    updateStatus('error', '已断开');
+                    addLog(`连接丢失: ${responseObject.errorMessage}`, 'error');
+                }
             };
 
             client.onMessageArrived = (message) => {
-                addLog("收到: " + message.payloadString);
+                addLog(`收到: ${message.payloadString}`, 'success');
                 try {
                     const data = JSON.parse(message.payloadString);
-                    if(data.temperature) document.getElementById('temp').innerText = data.temperature;
-                    if(data.humidity) document.getElementById('hum').innerText = data.humidity;
-                } catch(e) {
-                    addLog("数据格式错误");
+                    updateDashboard(data);
+                } catch (e) {
+                    addLog("JSON 解析错误", 'warn');
                 }
             };
 
             const options = {
-                timeout: 3,
+                timeout: 5,
+                useSSL: config.useSSL,
                 onSuccess: () => {
-                    statusP.innerText = "已连接到 EMQX 公共服务器";
-                    statusP.className = "text-sm text-green-600 mt-2";
-                    addLog("连接成功，订阅主题: " + TOPIC);
+                    updateStatus('connected', '在线');
+                    addLog("连接成功！订阅主题: " + TOPIC, 'success');
                     client.subscribe(TOPIC);
                 },
                 onFailure: (message) => {
-                    statusP.innerText = "连接失败: " + message.errorMessage;
-                    statusP.className = "text-sm text-red-500 mt-2";
-                    addLog("连接失败");
+                    updateStatus('error', '连接失败');
+                    addLog(`连接失败: ${message.errorMessage}`, 'error');
+                    addLog("建议：尝试切换上方其他 Broker 节点", 'warn');
                 }
             };
-            
-            addLog("正在连接...");
+
             client.connect(options);
         }
 
-        // 模拟数据功能（用于测试网页是否正常）
-        function simulateData() {
-            const mockData = {
-                temperature: (20 + Math.random() * 10).toFixed(1),
-                humidity: (40 + Math.random() * 20).toFixed(1)
-            };
-            // 直接调用消息处理函数模拟接收
-            client.onMessageArrived({
-                destinationName: TOPIC,
-                payloadString: JSON.stringify(mockData)
-            });
+        function updateDashboard(data) {
+            if (data.temperature !== undefined) {
+                const temp = parseFloat(data.temperature);
+                document.getElementById('tempVal').innerText = temp.toFixed(1);
+                // 简单的进度条映射 (0-50度)
+                const percent = Math.min(Math.max((temp / 50) * 100, 0), 100);
+                document.getElementById('tempBar').style.width = `${percent}%`;
+            }
+            if (data.humidity !== undefined) {
+                const hum = parseFloat(data.humidity);
+                document.getElementById('humVal').innerText = hum.toFixed(1);
+                document.getElementById('humBar').style.width = `${hum}%`;
+            }
         }
 
-        // 页面加载后启动
-        window.onload = initMQTT;
+        function clearLogs() {
+            document.getElementById('logArea').innerHTML = '<div class="log-entry text-slate-500 italic">> 日志已清空</div>';
+        }
+
+        window.onload = initUI;
     </script>
 </body>
 </html>
